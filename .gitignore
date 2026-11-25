@@ -6,3 +6,4 @@
 ladybird-nightly-git/ladybird/
 *.AppImage
 */LICENSE-*
+*/*.tar.gz
