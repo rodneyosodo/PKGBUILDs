@@ -10,6 +10,7 @@ Powered by [nvchecker](https://github.com/lilydjwg/nvchecker/) & [aurpublish](ht
 | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | [ladybird-nightly-bin](https://aur.archlinux.org/packages/ladybird-nightly-bin) | `yay -S ladybird-nightly-bin` (prebuilt nightly, no local build) |
 | [ladybird-nightly-git](https://aur.archlinux.org/packages/ladybird-nightly-git) | `yay -S ladybird-nightly-git` (builds from source)               |
+| [yogurt-appimage](https://aur.archlinux.org/packages/yogurt-appimage)           | `yay -S yogurt-appimage` (official AppImage, updated on release) |
 
 ## CI
 

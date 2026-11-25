@@ -1,0 +1,113 @@
+name: yogurt-appimage
+
+# Checks for a new Yogurt release every three hours. When there is one, it updates pkgver and the checksums,
+# commits that to main and publishes the package to the AUR.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - yogurt-appimage/**
+      - .github/scripts/**
+      - .github/workflows/yogurt-appimage.yml
+  pull_request:
+    paths:
+      - yogurt-appimage/**
+      - .github/scripts/**
+      - .github/workflows/yogurt-appimage.yml
+  schedule:
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+
+env:
+  PKG: yogurt-appimage
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash .github/scripts/makepkg.sh check "$PKG"
+
+  update:
+    name: Update to the latest release
+    needs: check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    permissions:
+      contents: write
+    outputs:
+      updated: ${{ steps.update.outputs.updated }}
+    steps:
+      - run: pacman -Syu --noconfirm --needed git pacman-contrib jq
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Update the PKGBUILD
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/FrigadeHQ/yogurt/releases/latest | jq -r .tag_name)
+          latest=${latest#v}
+          case "$latest" in
+            [0-9]*.*[0-9]) ;;
+            *) echo "::error::Unexpected release tag: $latest"; exit 1 ;;
+          esac
+          case "$latest" in *[!0-9A-Za-z.]*) echo "::error::Unexpected release tag: $latest"; exit 1 ;; esac
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          current=$(sed -n 's/^pkgver=//p' "$PKG/PKGBUILD")
+          echo "current $current, latest $latest"
+          if [ "$latest" = "$current" ] || [ "$(vercmp "$latest" "$current")" -le 0 ]; then
+            echo "updated=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sed -i -e "s/^pkgver=.*/pkgver=$latest/" -e 's/^pkgrel=.*/pkgrel=1/' "$PKG/PKGBUILD"
+          useradd --create-home builder
+          chown -R builder "$PKG"
+          runuser -u builder -- bash -c "cd '$PKG' && updpkgsums && makepkg --printsrcinfo >.SRCINFO && rm -f -- *.AppImage LICENSE-*"
+          git diff --stat
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$PKG/PKGBUILD" "$PKG/.SRCINFO"
+          git commit -m "upgpkg: $PKG $latest-1" -m "https://github.com/FrigadeHQ/yogurt/releases/tag/v$latest"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && break
+            git pull --rebase origin main
+          done
+          echo "updated=true" >>"$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish to the AUR
+    needs: [check, update]
+    # Publish when someone changes the package on main, or after a successful update. The commit the update job
+    # pushes does not start a new run, because pushes made with GITHUB_TOKEN do not trigger workflows.
+    if: >-
+      always() && needs.check.result == 'success' && needs.update.result != 'failure' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || needs.update.outputs.updated == 'true')
+    runs-on: ubuntu-latest
+    concurrency: aur-yogurt-appimage
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0 # to find the last commit that changed the package
+      - env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+          GIT_AUTHOR_NAME=$(git log -1 --format=%an -- "$PKG")
+          GIT_AUTHOR_EMAIL=$(git log -1 --format=%ae -- "$PKG")
+          bash .github/scripts/aur-push.sh "$PKG" \
+            "$(git log -1 --format=%s -- "$PKG") (${{ github.server_url }}/${{ github.repository }}/commit/$(git log -1 --format=%H -- "$PKG"))"
