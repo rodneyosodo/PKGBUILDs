@@ -1,0 +1,160 @@
+name: ladybird
+
+# ladybird-nightly-git: the source package, published to the AUR whenever it changes on main.
+# ladybird-nightly-bin: CI builds ladybird-nightly-git every night, attaches the package to a GitHub Release and
+#                       publishes a PKGBUILD that installs it, so users don't have to build Ladybird themselves.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ladybird-nightly-*/**
+      - .github/scripts/**
+      - .github/workflows/ladybird.yml
+  pull_request:
+    paths:
+      - ladybird-nightly-*/**
+      - .github/scripts/**
+      - .github/workflows/ladybird.yml
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      build:
+        description: Build and release a new ladybird-nightly-bin
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint ${{ matrix.pkg }}
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    strategy:
+      matrix:
+        pkg: [ladybird-nightly-git, ladybird-nightly-bin]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/makepkg.sh check "${{ matrix.pkg }}"
+
+  publish-git:
+    name: Publish ladybird-nightly-git to the AUR
+    needs: check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    concurrency: aur-ladybird-nightly-git
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          GIT_AUTHOR_NAME: ${{ github.event.head_commit.author.name || github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.event.head_commit.author.email }}
+        run: |
+          bash .github/scripts/aur-push.sh ladybird-nightly-git \
+            "$(git log -1 --format=%s) (${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})"
+
+  build:
+    name: Build ladybird-nightly-git
+    needs: check
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || inputs.build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    concurrency: build-ladybird
+    outputs:
+      pkgver: ${{ steps.pkg.outputs.pkgver }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ladybird and its vcpkg dependencies need far more disk than a runner has free by default.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Build in an Arch Linux container
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo archlinux:base-devel \
+            bash .github/scripts/makepkg.sh build ladybird-nightly-git
+
+      - name: Name the package for the release
+        id: pkg
+        run: |
+          file=$(echo ladybird-nightly-git/out/*.pkg.tar.zst)
+          pkgver=$(basename "$file" | sed -E 's/^ladybird-nightly-git-(.+)-[0-9]+-x86_64\.pkg\.tar\.zst$/\1/')
+          mkdir release
+          sudo mv "$file" "release/ladybird-nightly-$pkgver-x86_64.pkg.tar.zst"
+          echo "pkgver=$pkgver" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ladybird-nightly
+          path: release/*.pkg.tar.zst
+          retention-days: 3
+
+  release:
+    name: Release ladybird-nightly-bin
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PKGVER: ${{ needs.build.outputs.pkgver }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ladybird-nightly
+
+      - name: Create the release
+        run: |
+          tag="ladybird-nightly-$PKGVER"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already exists."
+            exit 0
+          fi
+          commit=${PKGVER##*.}
+          gh release create "$tag" ./*.pkg.tar.zst --title "Ladybird nightly $PKGVER" --notes \
+            "Built from https://github.com/LadybirdBrowser/ladybird/commit/$commit. Install with \`yay -S ladybird-nightly-bin\`."
+
+      # Only the newest release is installed by the AUR package; keep a few for rollbacks.
+      - name: Delete old releases
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName' | grep '^ladybird-nightly-' |
+            tail -n +6 | xargs -r -n1 gh release delete --cleanup-tag --yes
+
+  publish-bin:
+    name: Publish ladybird-nightly-bin to the AUR
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    concurrency: aur-ladybird-nightly-bin
+    env:
+      PKGVER: ${{ needs.build.outputs.pkgver }}
+    steps:
+      - run: pacman -Syu --noconfirm --needed git openssh
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ladybird-nightly
+
+      - name: Fill in pkgver and sha256sums
+        run: |
+          sha=$(sha256sum "ladybird-nightly-$PKGVER-x86_64.pkg.tar.zst" | cut -d' ' -f1)
+          sed -i -e "s/^pkgver=.*/pkgver=$PKGVER/" -e "s/^sha256sums=.*/sha256sums=('$sha')/" \
+            ladybird-nightly-bin/PKGBUILD
+          chown -R nobody ladybird-nightly-bin
+          (cd ladybird-nightly-bin && runuser -u nobody -- makepkg --printsrcinfo >.SRCINFO)
+          cat ladybird-nightly-bin/.SRCINFO
+
+      - env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          GIT_AUTHOR_NAME: ${{ github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+        run: |
+          bash .github/scripts/aur-push.sh ladybird-nightly-bin \
+            "Update to $PKGVER (${{ github.server_url }}/${{ github.repository }}/releases/tag/ladybird-nightly-$PKGVER)"
