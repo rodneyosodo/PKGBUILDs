@@ -1,0 +1,42 @@
+# Maintainer: Rodney Osodo <socials@rodneyosodo.com>
+
+# Prebuilt Ladybird from master: CI builds ladybird-nightly-git, attaches it to a GitHub Release, and publishes this
+# PKGBUILD to the AUR with pkgver and sha256sums filled in (see .github/workflows/ladybird.yml). The values below are
+# placeholders.
+
+pkgname=ladybird-nightly-bin
+pkgver=r0
+pkgrel=1
+pkgdesc='Truly independent web browser, prebuilt from the latest master'
+arch=(x86_64)
+url='https://ladybird.org'
+license=(BSD-2-Clause)
+depends=(
+  gcc-libs
+  glibc
+  libgl
+  libpulse
+  qt6-base
+  qt6-positioning
+  ttf-liberation
+  wayland
+  xcb-util-wm
+)
+optdepends=(
+  'ffmpeg: audio and video playback'
+  'qt6-wayland: native Wayland support'
+)
+provides=(ladybird)
+conflicts=(ladybird ladybird-nightly-git)
+options=(!strip !debug)
+_repo=rodneyosodo/PKGBUILDs
+_file="ladybird-nightly-$pkgver-x86_64.pkg.tar.zst"
+source=("$_file::https://github.com/$_repo/releases/download/ladybird-nightly-$pkgver/$_file")
+noextract=("$_file")
+sha256sums=('SKIP')
+
+package() {
+  bsdtar -xf "$srcdir/$_file" -C "$pkgdir" \
+    --exclude .PKGINFO --exclude .BUILDINFO --exclude .MTREE --exclude .INSTALL
+  mv "$pkgdir/usr/share/licenses/ladybird-nightly-git" "$pkgdir/usr/share/licenses/$pkgname"
+}
