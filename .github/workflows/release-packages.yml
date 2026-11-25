@@ -9,8 +9,8 @@ on:
     branches: [main]
     paths:
       - yogurt-appimage/**
-      - dusk/**
-      - dusk-bin/**
+      - dusk-menu/**
+      - dusk-menu-bin/**
       - clacks/**
       - clacks-bin/**
       - .github/scripts/**
@@ -18,8 +18,8 @@ on:
   pull_request:
     paths:
       - yogurt-appimage/**
-      - dusk/**
-      - dusk-bin/**
+      - dusk-menu/**
+      - dusk-menu-bin/**
       - clacks/**
       - clacks-bin/**
       - .github/scripts/**
@@ -45,9 +45,9 @@ jobs:
         include:
           - pkg: yogurt-appimage
             upstream: FrigadeHQ/yogurt
-          - pkg: dusk
+          - pkg: dusk-menu
             upstream: rodneyosodo/dusk
-          - pkg: dusk-bin
+          - pkg: dusk-menu-bin
             upstream: rodneyosodo/dusk
           - pkg: clacks
             upstream: rodneyosodo/clacks

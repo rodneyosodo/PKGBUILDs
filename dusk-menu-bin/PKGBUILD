@@ -3,7 +3,7 @@
 # Installs the release's prebuilt binaries. CI updates pkgver and the checksums when upstream releases
 # (see .github/workflows/release-packages.yml).
 
-pkgname=dusk-bin
+pkgname=dusk-menu-bin
 _pkgname=dusk
 pkgver=0.1.4
 pkgrel=1
@@ -22,8 +22,8 @@ depends=(
   wayland
 )
 optdepends=('libnotify: notifications when an action fails')
-provides=("$_pkgname")
-conflicts=("$_pkgname" dusk-git)
+provides=(dusk-menu)
+conflicts=(dusk-menu dusk-git)
 options=(!debug)
 source_x86_64=("$url/releases/download/v$pkgver/$_pkgname-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/$_pkgname-$pkgver-aarch64-unknown-linux-gnu.tar.gz")
